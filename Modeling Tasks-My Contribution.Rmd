@@ -1,0 +1,584 @@
+---
+title: "Modeling Tasks"
+output: html_document
+date: "2023-06-23"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+>Business Problem: A majority of the loan applications are rejected because of insufficient or non-existent credit histories of the applicant, who are forced to turn to untrustworthy lenders for their financial needs. To address this issue, Home Credit uses telco and transactional data to predict the loan repayment abilities. If an applicant is deemed fit and capable to repay a loan, their application is accepted or otherwise rejected. Our analytics approach would be to use the full potential of the alternative data to see whether or not an applicant will be able to pay back a loan.
+  Home Credit wants to empower customers by enabling them to borrow easily and safely. With a solution, the business will have an increase in client’s and in turn provide more revenue for Home Credit. The scope of the project is to identify the potential defaulters based on exploratory data analysis with the data given about the applicants features. Our project goal is to find the model with the highest accuracy to deem the the default probability for a specific loan.Success metrics will be defined by a larger circle of prospective clients being accepted that are capable of making loan repayments. My team consists of myself, Jenisha Rawal, Tarun Gulati, and Anjan Kumar. The project will be finished by August 2nd and we will present to the stakeholders that day. Important project milestones to keep in mind would be to complete our exploratory data analysis notebook by June 18th and modeling by July 9th.
+
+>Table of Contents:
+Task 1: Cross-validation with Training set and Validation
+Task 2: Performance benchmark by majority class classifier.
+Task 3: Logistic Regression Models
+Task 4: Random Forest and Gradient Boosting
+Task 5: Data Transformations
+Task 6: Upsampling and Downsampling
+Task 7: Ensemble Model
+Task 8: Addtional Feature Engineering to Boost Model Performance
+Task 9: Hyperparameter Tuning
+
+>Task 1: Training set and a validation set using application_train.csv data set to do cross-validation.
+
+```{r}
+library(tidyverse)
+library(e1071)
+library(C50)
+library(psych)
+library(caret)
+library(rminer)
+library(rmarkdown)
+library(matrixStats)
+library(knitr)
+library(randomForest)
+library(xgboost)
+library(pROC)
+library(nnet)
+library(tictoc) #for tic() and toc()
+library(RWeka) #for Multilayerperceptron() and IBk()
+library(kernlab) #for ksvm()
+
+setwd("~/IS-6812")
+app <- read.csv(file = "application_train.csv", stringsAsFactors = TRUE)
+app$TARGET <- factor(app$TARGET)
+```
+
+```{r}
+set.seed(500)
+folds <- createFolds(app$TARGET, k = 3)
+str(folds)
+
+# first iteration of cross validation
+# prepared training and test sets 
+app_test <- app[folds[[1]], ]
+app_train <- app[-folds[[1]],]
+
+#str(app_test)
+#str(app_train)
+
+prop.table(table(app_train$TARGET))
+prop.table(table(app_test$TARGET))
+
+# compared with the class distribution in the whole data set
+prop.table(table(app$TARGET))
+
+# model using the training set
+app_nb <- naiveBayes(app_train$TARGET~.,app_train)
+app_nb
+```
+
+
+```{r}
+# second iteration of cv evaluation
+# training and test data
+app_test2 <- app[folds[[2]], ]
+app_train2 <- app[-folds[[2]],]
+
+prop.table(table(app_train2$TARGET))
+prop.table(table(app_test2$TARGET))
+
+# model using the training set
+app_nb2 <- naiveBayes(app_train2$TARGET~.,app_train2)
+
+```
+> The main dataset is “application_train.csv”. It contains 307,511 observations of 122 variables and provides static data for all applicants. The target variable indicates whether clients have difficulties in meeting payment in the main dataset. Each observation is a loan application and includes the target value, and some demographic information.
+
+>Task 2: Identify the performance benchmark established by the majority class classifier. 
+
+```{r}
+# performance evaluation metrics on 1st fold
+predicted_TARGET <- predict(app_nb, app_train)
+mmetric(app_train$TARGET, predicted_TARGET, metric="CONF") #confusion matrix
+mmetric(app_train$TARGET, predicted_TARGET, metric=c("ACC","TPR","PRECISION","F1"))
+```
+
+
+```{r}
+# performance evaluation metrics on 2nd fold
+predicted_TARGET2 <- predict(app_nb2, app_train2)
+mmetric(app_train2$TARGET, predicted_TARGET2, metric="CONF") #confusion matrix
+mmetric(app_train2$TARGET, predicted_TARGET2, metric=c("ACC","TPR","PRECISION","F1"))
+```
+
+>With these performance benchmark metrics, you can see that accuracy is at 30.62042 for the first fold and then decreases to 25.92 on the second fold for the number of correctly predicted classes. You can see from the confusion matrices that the True Positive and False Negative are higher than the other values, because there are significantly more '0's' associated with the target variable. The F1 score is the mean of precision and sensitivity at 40.49 at the first fold and 33.577 for the second fold.
+
+>Task 3: Logistic Regression Models using different predictors. 
+
+```{r}
+# Define the different sets of predictors
+predictor_sets <- list(
+  predictors1 = c("AMT_INCOME_TOTAL", "AMT_CREDIT"),
+  predictors2 = c("AMT_GOODS_PRICE", "AMT_ANNUITY"),
+  predictors3 = c("DAYS_REGISTRATION", "DAYS_EMPLOYED", "DAYS_ID_PUBLISH"),
+  predictors4 = c("APARTMENTS_AVG", "BASEMENTAREA_AVG", "YEARS_BEGINEXPLUATATION_AVG", "YEARS_BUILD_AVG")
+)
+
+# Fit logistic regression models with interaction terms
+models <- list()
+for (i in seq_along(predictor_sets)) {
+  predictors <- predictor_sets[[i]]
+  
+  # Create interaction terms
+  interaction_terms <- combn(predictors, 2, paste, collapse = "*")
+  
+  # Create the formula with interaction terms
+  formula <- as.formula(paste("TARGET ~ ", paste(c(predictors, interaction_terms), collapse = "+")))
+  
+  # Fit the logistic regression model
+  model <- glm(formula, data = app_train, family = "binomial")
+  models[[i]] <- model
+}
+
+# Evaluate models performance
+performance <- list()
+for (i in seq_along(models)) {
+  model <- models[[i]]
+  
+  # Make predictions on the test set
+  predictions <- predict(model, newdata = app_test, type = "response")
+  
+  # Convert predictions to binary values based on a threshold of 0.5
+  binary_predictions <- ifelse(predictions > 0.5, 1, 0)
+  
+  # Compute accuracy (ignoring missing values)
+  accuracy <- sum(binary_predictions == app_test$TARGET, na.rm = TRUE) / length(app_test$TARGET)
+  
+  
+  # Compute AUC
+  auc <- roc(as.numeric(app_test$TARGET) - 1, predictions,na.rm = TRUE)$auc
+  
+  # Store performance metrics
+  performance[[i]] <- list(accuracy = accuracy, auc = auc)
+}
+
+# Print performance metrics
+for (i in seq_along(performance)) {
+  cat(paste("Model", i, "Accuracy:", performance[[i]]$accuracy, "\n"))
+  cat(paste("Model", i, "AUC:", performance[[i]]$auc, "\n"))
+}
+
+```
+
+>Therefore we can assess the impact of interaction terms on the model's performance. The models were trained using logistic regression with different sets of predictors, including interaction terms.The model predicts the default probability for a specific loan. Let's compare the model performance in terms of accuracy and AUC:
+Model 1:
+Predictors: AMT_INCOME_TOTAL, AMT_CREDIT
+Accuracy: 0.919271443065636
+AUC: 0.516519499211906
+Model 2:
+Predictors: AMT_GOODS_PRICE, AMT_ANNUITY
+Accuracy: 0.918490985717631
+AUC: 0.567365019743164
+Model 3:
+Predictors: DAYS_REGISTRATION, DAYS_EMPLOYED, DAYS_ID_PUBLISH
+Accuracy: 0.919271443065636
+AUC: 0.550357021537715
+Model 4:
+Predictors: APARTMENTS_AVG, BASEMENTAREA_AVG, YEARS_BEGINEXPLUATATION_AVG, YEARS_BUILD_AVG
+Accuracy: 0.296661593693905
+AUC: 0.532661709462331
+
+
+>When comparing accuracy, Model 1, Model 2, and Model 3 have similar values, with Model 1 and Model 3 having the highest accuracy. However, Model 4 has a significantly lower accuracy compared to the other models. In terms of AUC, Model 2 has the highest value, indicating a better predictive power compared to the other models. Model 3 has a slightly lower AUC, and Model 1 has the lowest AUC. Model 4 also has a relatively low AUC value.
+
+>Comparing the models, we can observe that the inclusion of interaction terms does not consistently improve the model performance. In terms of accuracy, all models (with and without interaction terms) have similar values. However, in terms of AUC, Model 2, which includes interaction terms between AMT_GOODS_PRICE and AMT_ANNUITY, has the highest AUC value, indicating better discrimination ability between classes.We can conclude that the inclusion of interaction terms improves the model performance in terms of AUC but does not have a significant impact on accuracy. 
+
+
+>Task 4: Using Random Forest and Gradient Boosting to compare model performance.
+
+```{r}
+# Define the different sets of predictors
+predictor_sets <- list(
+  predictors1 = c("AMT_INCOME_TOTAL", "AMT_CREDIT"),
+  predictors2 = c("AMT_GOODS_PRICE", "AMT_ANNUITY"),
+  predictors3 = c("DAYS_REGISTRATION", "DAYS_EMPLOYED", "DAYS_ID_PUBLISH"),
+  predictors4 = c("APARTMENTS_AVG", "BASEMENTAREA_AVG", "YEARS_BEGINEXPLUATATION_AVG", "YEARS_BUILD_AVG")
+)
+
+# Initialize lists to store models
+models_rf <- list()
+models_gb <- list()
+
+# Fit random forest and gradient boosting models
+for (i in seq_along(predictor_sets)) {
+  predictors <- predictor_sets[[i]]
+  
+  # Subset the data with selected predictors
+  app_subset <- app[, predictors]
+  
+  # Filter out rows where TARGET equals 0
+  app_subset <- app_subset[app_subset$TARGET != 0, ]
+  
+  # Check the number of remaining observations
+  num_rows <- nrow(app_subset)
+  
+  # Minimum number of observations required
+  min_rows <- 100  # Adjust this value as needed
+  
+  if (num_rows < min_rows) {
+    cat("Skipping predictor set:", predictors, "- Insufficient data\n")
+    next
+  }
+  
+  # Split the data into training and test sets
+  set.seed(42)
+  train_indices <- sample(1:num_rows, 0.7 * num_rows)
+  app_train <- app_subset[train_indices, ]
+  app_test <- app_subset[-train_indices, ]
+  
+  # Step 1: Identify categorical predictors
+  categorical_vars <- sapply(app_train, is.factor)
+  
+  # No need to convert categorical predictors to character
+  
+  # Encode categorical predictors
+  app_train_encoded <- dummyVars(~ ., data = app_train) %>%
+    predict(app_train) %>%
+    as.data.frame()
+  
+  # Handle missing values
+  app_train_encoded <- na.roughfix(app_train_encoded)
+  
+  # Fit random forest model using ranger
+  model_rf <- ranger(~ ., data = app_train_encoded, num.trees = 100)
+  
+  # Print the model summary
+  print(model_rf)
+  
+  # Save the random forest model
+  models_rf[[i]] <- model_rf
+  
+  # Gradient boosting using caret
+  trainControl <- trainControl(method = "cv", number = 5)
+  model_gb <- train(~ ., data = app_train, method = "xgbTree", trControl = trainControl, nthread = 1, nrounds = 100, verbose = 0)
+  
+  # Save the gradient boosting model
+  models_gb[[i]] <- model_gb
+}
+
+
+# Evaluate models performance
+performance_rf <- lapply(models_rf, function(model) {
+  # Make predictions on the test set
+  predictions <- predict(model, newdata = app_test)
+  
+  # Compute accuracy
+  accuracy <- sum(predictions == app_test$TARGET) / length(app_test$TARGET)
+  
+  # Compute AUC
+  auc <- roc(as.numeric(app_test$TARGET) - 1, as.numeric(predictions))$auc
+  
+  # Return performance metrics
+  list(accuracy = accuracy, auc = auc)
+})
+
+performance_gb <- lapply(models_gb, function(model) {
+  # Make predictions on the test set
+  predictions <- predict(model, newdata = app_test)
+  
+  # Compute accuracy
+  accuracy <- sum(predictions == app_test$TARGET) / length(app_test$TARGET)
+  
+  # Compute AUC
+  auc <- roc(as.numeric(app_test$TARGET) - 1, as.numeric(predictions))$auc
+  
+  # Return performance metrics
+  list(accuracy = accuracy, auc = auc)
+})
+
+
+# Print performance metrics
+for (i in seq_along(predictor_sets)) {
+  if (length(models_rf) < i || length(models_gb) < i) {
+    cat("Skipping predictor set:", names(predictor_sets[i]), "- Insufficient data\n")
+    next
+  }
+  
+  # Random Forest
+  rf_predictions <- predict(models_rf[[i]], newdata = app_test_encoded)
+  rf_confusion <- confusionMatrix(rf_predictions, app_test_encoded$TARGET)
+  rf_accuracy <- rf_confusion$overall["Accuracy"]
+  rf_auc <- rf_confusion$byClass["AUC"]
+  
+  # Gradient Boosting
+  gb_predictions <- predict(models_gb[[i]], newdata = app_test_encoded)
+  gb_confusion <- confusionMatrix(gb_predictions, app_test_encoded$TARGET)
+  gb_accuracy <- gb_confusion$overall["Accuracy"]
+  gb_auc <- gb_confusion$byClass["AUC"]
+  
+  cat(paste("Random Forest - Model", i, "Accuracy:", rf_accuracy, "AUC:", rf_auc, "\n"))
+  cat(paste("Gradient Boosting - Model", i, "Accuracy:", gb_accuracy, "AUC:", gb_auc, "\n"))
+}
+
+
+```
+
+>Task 5: Data Transformations
+
+```{r}
+# Load the data
+test <- read.csv("application_test.csv", stringsAsFactors = TRUE)
+train <- read.csv("application_train.csv", stringsAsFactors = TRUE)
+
+numeric_data <- c('AMT_INCOME_TOTAL', 'AMT_CREDIT', 
+                'AMT_GOODS_PRICE', 'AMT_ANNUITY', 
+                'DAYS_REGISTRATION', 'DAYS_EMPLOYED', 'DAYS_ID_PUBLISH', 
+                'APARTMENTS_AVG', 'BASEMENTAREA_AVG', 'YEARS_BEGINEXPLUATATION_AVG', 'YEARS_BUILD_AVG')
+
+preObj <- preProcess(test[numeric_data], method=c("center", "scale"))
+newData <- predict(preObj, test[numeric_data])
+
+# Normalize the data
+normalized_data <- preProcess(test[numeric_data], method=c("range"))
+normalized_data
+
+# select data minus TARGET variable
+selected_data <- train[, !(names(train) %in% c("TARGET"))]
+summary(selected_data)
+
+# convert TARGET variable into Factor variable
+factor_variable <- as.factor(train$TARGET)
+
+```
+
+>Task 6: Upsampling and Downsampling
+
+```{r}
+#Upsample the data
+# The 'upSample' function from the 'caret' package performs upsampling by randomly duplicating instances in the minority class to match the majority class.
+
+# 'selected data' selects all columns except the TARGET variable.
+# 'factor_variable' is the TARGET variable to be upsampled. It has to be in factor
+# 'yname = "TARGET"' specifies the name of the target variable in the upsampled data.
+
+upsampled_data <- upSample(selected_data, factor_variable, yname = "TARGET")
+upsampled_data$TARGET
+
+# Count the number of instances in each class after upsampling
+upsampled_class_counts <- table(upsampled_data$TARGET)
+print(upsampled_class_counts)
+
+# The 'downSample' function from the 'caret' package performs downsampling by randomly removing instances from the majority class to match the minority class.
+
+downsampled_data <- downSample(selected_data, factor_variable, yname = "TARGET")
+
+# Count the number of instances in each class after downsampling
+downsampled_class_counts <- table(downsampled_data$TARGET)
+print(downsampled_class_counts)
+```
+
+>Task 7: Ensemble Model
+
+```{r}
+# first iteration of cross validation
+# prepared training and test sets 
+app_test1 <- app[folds[[1]], ]
+app_train1 <- app[-folds[[1]],]
+
+app_test2 <- app[folds[[2]], ]
+app_train2 <- app[-folds[[2]],]
+
+app_test3 <- app[folds[[3]], ]
+app_train3 <- app[-folds[[3]],]
+
+library(dplyr)
+app_train1 <- app_train1 %>%
+  mutate_if(is.numeric, ~ifelse(is.na(.), median(., na.rm = TRUE), .))
+app_train2 <- app_train2 %>%
+  mutate_if(is.numeric, ~ifelse(is.na(.), median(., na.rm = TRUE), .))
+app_train3 <- app_train3 %>%
+  mutate_if(is.numeric, ~ifelse(is.na(.), median(., na.rm = TRUE), .))
+
+# Train individual models
+#model1 <- train(TARGET ~ AMT_INCOME_TOTAL + AMT_CREDIT +AMT_GOODS_PRICE+AMT_GOODS_PRICE+DAYS_EMPLOYED+DAYS_ID_PUBLISH+APARTMENTS_AVG+BASEMENTAREA_AVG+YEARS_BEGINEXPLUATATION_AVG+YEARS_BUILD_AVG, data = app_train1, method = "rf")
+#model2 <- train(TARGET ~ AMT_INCOME_TOTAL + AMT_CREDIT +AMT_GOODS_PRICE+AMT_GOODS_PRICE+DAYS_EMPLOYED+DAYS_ID_PUBLISH+APARTMENTS_AVG+BASEMENTAREA_AVG+YEARS_BEGINEXPLUATATION_AVG+YEARS_BUILD_AVG, data = app_train2, method = "rf")
+#model3 <- train(TARGET ~ AMT_INCOME_TOTAL + AMT_CREDIT +AMT_GOODS_PRICE+AMT_GOODS_PRICE+DAYS_EMPLOYED+DAYS_ID_PUBLISH+APARTMENTS_AVG+BASEMENTAREA_AVG+YEARS_BEGINEXPLUATATION_AVG+YEARS_BUILD_AVG, data = app_train3, method = "rf")
+#model4 <- train(TARGET ~ AMT_INCOME_TOTAL + AMT_CREDIT +AMT_GOODS_PRICE+AMT_GOODS_PRICE+DAYS_EMPLOYED+DAYS_ID_PUBLISH+APARTMENTS_AVG+BASEMENTAREA_AVG+YEARS_BEGINEXPLUATATION_AVG+YEARS_BUILD_AVG, data = app_train1, method = "xgbTree")
+#model5 <- train(TARGET ~ AMT_INCOME_TOTAL + AMT_CREDIT +AMT_GOODS_PRICE+AMT_GOODS_PRICE+DAYS_EMPLOYED+DAYS_ID_PUBLISH+APARTMENTS_AVG+BASEMENTAREA_AVG+YEARS_BEGINEXPLUATATION_AVG+YEARS_BUILD_AVG, data = app_train2, method = "xgbTree")
+#model6 <- train(TARGET ~ AMT_INCOME_TOTAL + AMT_CREDIT +AMT_GOODS_PRICE+AMT_GOODS_PRICE+DAYS_EMPLOYED+DAYS_ID_PUBLISH+APARTMENTS_AVG+BASEMENTAREA_AVG+YEARS_BEGINEXPLUATATION_AVG+YEARS_BUILD_AVG, data = app_train3, method = "xgbTree")
+model7 <- train(TARGET ~ AMT_INCOME_TOTAL + AMT_CREDIT +AMT_GOODS_PRICE+DAYS_EMPLOYED+DAYS_ID_PUBLISH+APARTMENTS_AVG+BASEMENTAREA_AVG+YEARS_BEGINEXPLUATATION_AVG+YEARS_BUILD_AVG, data = app_train1, method = "glm")
+model8 <- train(TARGET ~ AMT_INCOME_TOTAL + AMT_CREDIT+AMT_GOODS_PRICE+DAYS_EMPLOYED+DAYS_ID_PUBLISH+APARTMENTS_AVG+BASEMENTAREA_AVG+YEARS_BEGINEXPLUATATION_AVG+YEARS_BUILD_AVG, data = app_train2, method = "glm")
+model9 <- train(TARGET ~ AMT_INCOME_TOTAL + AMT_CREDIT +AMT_GOODS_PRICE+DAYS_EMPLOYED+DAYS_ID_PUBLISH+APARTMENTS_AVG+BASEMENTAREA_AVG+YEARS_BEGINEXPLUATATION_AVG+YEARS_BUILD_AVG, data = app_train3, method = "glm")
+
+# Get the predicted probabilities for both classes using random forest models
+#ensemble_probs_rf <- predict(model1, app_test1, type = "prob")[, "1"] +
+                    #predict(model2, app_test2, type = "prob")[, "1"] +
+                    #predict(model3, app_test3, type = "prob")[, "1"]
+
+# Get the predicted probabilities for both classes using XGBoost models
+#ensemble_probs_xgb <- predict(model4, app_test1, type = "prob")[, "1"] +
+#                     predict(model5, app_test2, type = "prob")[, "1"] +
+#                    predict(model6, app_test3, type = "prob")[, "1"]
+
+# Get the predicted probabilities for both classes using logistic regression models
+ensemble_probs_lr <- predict(model7, app_test1, type = "prob")[, "1"] +
+                    predict(model8, app_test2, type = "prob")[, "1"] +
+                    predict(model9, app_test3, type = "prob")[, "1"]
+
+# Combine the predicted probabilities from all models
+ensemble_probs <-  ensemble_probs_lr
+
+# Convert probabilities to class predictions based on the maximum probability
+ensemble_predictions <- ifelse(ensemble_probs >= 0.5, 1, 0)
+
+# Select the corresponding subset of app_test1$TARGET based on the length of ensemble_predictions
+target_subset <- app_test1$TARGET[1:length(ensemble_predictions)]
+
+# Calculate performance metrics
+ensemble_accuracy <- mean(ensemble_predictions == target_subset)
+ensemble_auc <- roc(as.numeric(target_subset), ensemble_probs)$auc
+
+ensemble_accuracy
+ensemble_auc
+```
+
+```{r}
+summary(app_train1[c("AMT_INCOME_TOTAL", "AMT_CREDIT", "AMT_GOODS_PRICE", "DAYS_EMPLOYED", "DAYS_ID_PUBLISH", "APARTMENTS_AVG", "BASEMENTAREA_AVG", "YEARS_BEGINEXPLUATATION_AVG", "YEARS_BUILD_AVG")])
+```
+```{r}
+knitr::opts_chunk$set(warning = FALSE, message = FALSE)
+```
+
+>Task 8: Addtional Feature Engineering to Boost Model Performance
+
+```{r}
+feature_engineering <- function(data) {
+  # Perform feature engineering on the data
+  
+  # Example feature engineering steps:
+  
+  # 1. Scaling numeric variables
+  data_scaled <- data
+  numeric_vars <- c("AMT_INCOME_TOTAL", "AMT_CREDIT", "AMT_GOODS_PRICE", "DAYS_EMPLOYED")
+  data_scaled[numeric_vars] <- scale(data_scaled[numeric_vars])
+  
+  # 2. Creating new features
+  data_new_features <- data_scaled
+  data_new_features$EMPLOYED_MORE_THAN_10_YEARS <- ifelse(data_new_features$DAYS_EMPLOYED > 3650, 1, 0)
+  
+  data_new_features$DAYS_ID_PUBLISH_SCALED <- scale(data_new_features$DAYS_ID_PUBLISH)
+  data_new_features$APARTMENTS_AVG_LOG <- log(data_new_features$APARTMENTS_AVG + 1)
+  
+  # Return the modified data
+  return(data_new_features)
+}
+
+# Apply feature engineering to the train and test sets
+app_train1 <- feature_engineering(app_train1)
+app_train2 <- feature_engineering(app_train2)
+app_train3 <- feature_engineering(app_train3)
+
+app_test1 <- feature_engineering(app_test1)
+app_test2 <- feature_engineering(app_test2)
+app_test3 <- feature_engineering(app_test3)
+
+formula <- as.formula("TARGET ~ AMT_INCOME_TOTAL + AMT_CREDIT + AMT_GOODS_PRICE + DAYS_ID_PUBLISH_SCALED + APARTMENTS_AVG_LOG + BASEMENTAREA_AVG + YEARS_BEGINEXPLUATATION_AVG + YEARS_BUILD_AVG + EMPLOYED_MORE_THAN_10_YEARS")
+
+model7 <- train(formula, data = app_train1, method = "glm")
+
+# Train the logistic regression model using app_train2
+model8 <- train(formula, data = app_train2, method = "glm")
+
+# Train the logistic regression model using app_train3
+model9 <- train(formula, data = app_train3, method = "glm")
+
+# Make predictions on the test sets using the trained models
+pred7 <- predict(model7, newdata = app_test1, type = "prob")
+pred8 <- predict(model8, newdata = app_test2, type = "prob")
+pred9 <- predict(model9, newdata = app_test3, type = "prob")
+
+# Extract the positive class probabilities
+pred7_prob <- pred7[, "1"]
+pred8_prob <- pred8[, "1"]
+pred9_prob <- pred9[, "1"]
+
+# Convert prediction probabilities to binary predictions
+pred7 <- ifelse(pred7_prob > 0.5, 1, 0)
+pred8 <- ifelse(pred8_prob > 0.5, 1, 0)
+pred9 <- ifelse(pred9_prob > 0.5, 1, 0)
+
+# Calculate accuracy for each model
+accuracy7 <- mean(pred7 == app_test1$TARGET)
+accuracy8 <- mean(pred8 == app_test2$TARGET)
+accuracy9 <- mean(pred9 == app_test3$TARGET)
+
+target_subset1 <- app_test1$TARGET[1:length(pred7)]
+target_subset2 <- app_test2$TARGET[1:length(pred8)]
+target_subset3 <- app_test3$TARGET[1:length(pred9)]
+
+
+auc7 <- roc(as.numeric(target_subset1), pred7_prob)$auc
+auc8 <- roc(as.numeric(target_subset2), pred8_prob)$auc
+auc9 <- roc(as.numeric(target_subset3), pred9_prob)$auc
+
+
+# Print accuracy and AUC for each model
+print(paste("Model 7 - Accuracy:", accuracy7))
+print(paste("Model 7 - AUC:", auc7))
+print(paste("Model 8 - Accuracy:", accuracy8))
+print(paste("Model 8 - AUC:", auc8))
+print(paste("Model 9 - Accuracy:", accuracy9))
+print(paste("Model 9 - AUC:", auc9))
+```
+>Task 9: Hyperparameter Tuning
+
+```{r}
+# Splitting data into train and test using app data
+set.seed(123)  
+train_indices <- createDataPartition(app$TARGET, p = 0.7, list = FALSE)
+train <- app[train_indices, ]
+test <- app[-train_indices, ]
+
+# Performing median imputation on train and test datasets
+train_data <- preProcess(train, method = c("medianImpute"))
+test_data <- predict(train_data, train)
+
+# Defining hyperparameters for the glm model
+hyperparameters <- expand.grid(alpha = seq(0, 1, by = 0.1), lambda = seq(0, 1, by = 0.1))
+
+# Training the models with hyperparameters and obtaining performance metrics
+model7 <- train(TARGET ~ AMT_INCOME_TOTAL + AMT_CREDIT + AMT_GOODS_PRICE + DAYS_EMPLOYED + DAYS_ID_PUBLISH + APARTMENTS_AVG + BASEMENTAREA_AVG + YEARS_BEGINEXPLUATATION_AVG + YEARS_BUILD_AVG, 
+                data = train_data, 
+                method = "glm", 
+                trControl = trainControl(method = "cv", number = 5),
+                tuneGrid = hyperparameters)
+
+model8 <- train(TARGET ~ AMT_INCOME_TOTAL + AMT_CREDIT + AMT_GOODS_PRICE + DAYS_EMPLOYED + DAYS_ID_PUBLISH + APARTMENTS_AVG + BASEMENTAREA_AVG + YEARS_BEGINEXPLUATATION_AVG + YEARS_BUILD_AVG, 
+                data = train_data, 
+                method = "glm", 
+                trControl = trainControl(method = "cv", number = 5),
+                tuneGrid = hyperparameters)
+
+model9 <- train(TARGET ~ AMT_INCOME_TOTAL + AMT_CREDIT + AMT_GOODS_PRICE + DAYS_EMPLOYED + DAYS_ID_PUBLISH + APARTMENTS_AVG + BASEMENTAREA_AVG + YEARS_BEGINEXPLUATATION_AVG + YEARS_BUILD_AVG, 
+                data = train_data, 
+                method = "glm", 
+                trControl = trainControl(method = "cv", number = 5),
+                tuneGrid = hyperparameters)
+
+# Evaluating performance metrics on test data
+predictions7 <- predict(model7, newdata = test_data)
+accuracy7 <- confusionMatrix(predictions7, test_data$TARGET)$overall["Accuracy"]
+
+predictions8 <- predict(model8, newdata = test_data)
+accuracy8 <- confusionMatrix(predictions8, test_data$TARGET)$overall["Accuracy"]
+
+predictions9 <- predict(model9, newdata = test_data)
+accuracy9 <- confusionMatrix(predictions9, test_data$TARGET)$overall["Accuracy"]
+
+# Printing performance metrics
+cat("Model 7 Accuracy:", accuracy7, "\n")
+cat("Model 8 Accuracy:", accuracy8, "\n")
+cat("Model 9 Accuracy:", accuracy9, "\n")
+```
+
+>Results: Our team has used logistic regression models, cross validation, ensemble models, and feature engineering to decide what models will be useful. There is a relatively low risk in data accuracy because customer's could have supplied us with the incorrect 'yes' or 'no' response to increase their chances of getting loan. In terms of accuracy, all models (with and without interaction terms) have similar values. However, in terms of AUC, Model 2, which includes interaction terms between AMT_GOODS_PRICE and AMT_ANNUITY, has the highest AUC value, indicating better discrimination ability between classes.We can conclude that the inclusion of interaction terms improves the model performance in terms of AUC but does not have a significant impact on accuracy. Based on the results in Task 6, upsampling does not loose information then downsampling because downsampling may loose information yet can be more computationally efficient. This is seen through the counts of upsampling 1:282686/0:282686 and downsampling 1:24825/0:24825.Upsampling is better than downsampling because it gives more no of data whereas in downsampling we lose some amount of data. For addtional feature engineering to boost model performance, Model 7 has the highest performance metrics compared to Model 8 and 9 because the AUC is at 0.52 and the accuracy at 0.919.The Bayesian search can be observed to have progressively better scores with increasing iterations as expected. 
+
+
+>Group Contributions:
+Dominique Miranda: Contributed to the Introduction/Table of Contents, Results, Formatting, Task 1 and Task 2, troubleshooting Task 9
+Tarun Gulati: Contributed to Task 3, Task 4
+Jenisha Rawal: Contributed to Task 5 and Task 6
+Anjan Kumar: Contributed to Task 7, Task-8, Task 9
