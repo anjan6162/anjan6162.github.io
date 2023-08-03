@@ -1,15 +1,12 @@
 title: Anjan Kumar Regulavalasa # your name (or website title) here
 logo: "/images/my photo.jpeg?raw=true" # your photo (or logo) here
 description: > # your text below (remove <br> elements if you don't need line breaks)
-  First description 
-  <br>Anjan is a data-driven professional pursuing a Master's degree in Business Analytics with a background in Civil Engineering 
-  and Construction Economics. Skilled in R, Python, and SQL programming, he excels in using analytics and visualization tools like 
-  Microsoft PowerBI and Tableau.<br>
+  Summary
+  <br>Anjan is a data-driven professional with a Master's in Business Analytics and a background in Civil Engineering. 
+  He is proficient in R, Python, and SQL programming, and skilled in using Microsoft PowerBI and Tableau for analytics 
+  and visualization. With over 4 years of project management and data analysis experience, he excels at informed decision-making,
+  risk identification, and resource management.<br>
   
-  Second description 
-  <br>With 4+ years of experience in project management and data analysis, he has a proven track record of making informed decisions,
-  identifying risks, and managing resources effectively. Anjan's passion for soccer, cricket, and athletics, along with his commitment 
-  to continuous learning in data science, make him a valuable asset to any team.<br>
   <a href="https://www.linkedin.com/in/anjani-kumar-rvr/">View My LinkedIn Profile</a> 
   
 remote_theme: pages-themes/minimal@v0.2.0
